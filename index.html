@@ -14,6 +14,7 @@
     <style>
         #map { height: 100%; width: 100%; z-index: 1; }
         .esconder-scroll::-webkit-scrollbar { display: none; }
+        .bolinha-cor { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; border: 1px solid #000; }
     </style>
 </head>
 <body class="bg-gray-100 h-screen font-sans overflow-hidden">
@@ -31,7 +32,7 @@
                     <option value="">Todas as Fazendas (Mostrar Tudo)</option>
                 </select>
                 <button onclick="gerarPDF()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
-                    Imprimir Relatório (PDF 2+ Páginas)
+                    Imprimir Relatório (PDF Colorido)
                 </button>
                 <button onclick="limparSelecao()" class="w-full bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-1 px-4 rounded shadow mt-2">
                     Limpar Tudo
@@ -71,15 +72,31 @@
             maxZoom: 20, crossOrigin: true, attribution: '© Google Maps'
         }).addTo(map);
 
-        let ordemSelecao = 1;
+        // ==========================================
+        // VARIÁVEIS DE CONTROLE DA NOVA LÓGICA DE CORES
+        // ==========================================
+        let contadorSequencia = 1;
+        let sequenciaPorFazenda = {}; // Vai guardar qual fazenda tem qual sequência e cor
         let talhoesSelecionados = [];
         let listaFazendas = new Set();
         let geojsonLayer;
 
+        // Paleta de cores vibrantes para o mapa não ficar parecendo filme deprê europeu
+        const paletaCores = [
+            "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+            "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
+            "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000",
+            "#aaffc3", "#808000", "#ffd8b1", "#000075", "#808080"
+        ];
+
+        function getCor(ordem) {
+            // Se passar de 20 fazendas, ele repete as cores do começo
+            return paletaCores[(ordem - 1) % paletaCores.length];
+        }
+
         const estiloPadrao = { color: "#3388ff", weight: 1, fillOpacity: 0.2, opacity: 1 };
         const estiloApagado = { color: "#999999", weight: 1, fillOpacity: 0.05, opacity: 0.3 };
         const estiloInvisivel = { color: "transparent", weight: 0, fillOpacity: 0, opacity: 0 };
-        const estiloSelecionado = { color: "#ff1111", weight: 3, fillOpacity: 0.6, opacity: 1 };
 
         if (typeof meusTalhoes === 'undefined') {
             alert("Erro: Arquivo JS não carregou.");
@@ -103,13 +120,28 @@
                         direction: "center", className: 'bg-white bg-opacity-90 px-2 py-1 border border-gray-400 rounded text-sm font-bold shadow'
                     });
 
+                    // A NOVA LÓGICA DE CLIQUE
                     layer.on('click', function () {
                         if(talhoesSelecionados.find(t => t.id === idTalhao)) return;
                         
-                        layer.setStyle(estiloSelecionado);
-                        talhoesSelecionados.push({ id: idTalhao, ordem: ordemSelecao, fazenda: fazenda, talhao: talhao });
+                        let ordem, cor;
+                        
+                        // Checa se a fazenda já tem uma sequência assinada
+                        if (sequenciaPorFazenda[fazenda]) {
+                            ordem = sequenciaPorFazenda[fazenda].ordem;
+                            cor = sequenciaPorFazenda[fazenda].cor;
+                        } else {
+                            // Se é fazenda nova, pega a próxima ordem e uma cor nova
+                            ordem = contadorSequencia++;
+                            cor = getCor(ordem);
+                            sequenciaPorFazenda[fazenda] = { ordem: ordem, cor: cor };
+                        }
+                        
+                        // Pinta com a cor exclusiva da sequência
+                        layer.setStyle({ color: cor, weight: 3, fillOpacity: 0.6, opacity: 1 });
+                        
+                        talhoesSelecionados.push({ id: idTalhao, ordem: ordem, fazenda: fazenda, talhao: talhao, cor: cor });
                         atualizarTabelaUI();
-                        ordemSelecao++;
                     });
                 }
             }).addTo(map);
@@ -125,6 +157,9 @@
             });
         }
 
+        // ==========================================
+        // FILTRO DE FAZENDA (COM SUPORTE A CORES)
+        // ==========================================
         document.getElementById('select-fazenda').addEventListener('change', function(e) {
             const fazendaAlvo = e.target.value;
             if(!geojsonLayer) return;
@@ -137,28 +172,35 @@
 
             const boundsFazenda = L.featureGroup();
             geojsonLayer.eachLayer(function(layer) {
-                const isSelecionado = talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno);
+                const sel = talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno);
                 if (layer.feature.properties._nomeFazenda === fazendaAlvo) {
                     boundsFazenda.addLayer(layer);
-                    if (!isSelecionado) layer.setStyle(estiloPadrao);
+                    if (!sel) layer.setStyle(estiloPadrao); // Se não tá selecionado, fica azulzinho
                 } else {
-                    if (!isSelecionado) layer.setStyle(estiloApagado);
+                    if (!sel) layer.setStyle(estiloApagado); // O resto apaga
                 }
             });
 
             if (boundsFazenda.getLayers().length > 0) {
-                map.fitBounds(boundsFazenda.getBounds(), { padding: [50, 50] });
+                map.fitBounds(boundsFazenda.getBounds(), { padding: [20, 20] });
             }
         });
 
         function atualizarTabelaUI() {
             const tbody = document.getElementById('tabela-selecao');
             tbody.innerHTML = ''; 
+            
+            // Ordena para a tabela ficar bonita (todos da seq 1 juntos, depois seq 2...)
+            talhoesSelecionados.sort((a, b) => a.ordem - b.ordem);
+
             talhoesSelecionados.forEach(item => {
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-gray-100 transition-colors";
                 tr.innerHTML = `
-                    <td class="px-2 py-2 font-bold text-blue-700"># ${item.ordem}</td>
+                    <td class="px-2 py-2 font-bold whitespace-nowrap" style="color: ${item.cor === '#ffe119' || item.cor === '#fffac8' ? '#b89f00' : item.cor}">
+                        <span class="bolinha-cor" style="background-color: ${item.cor}"></span>
+                        # ${item.ordem}
+                    </td>
                     <td class="px-2 py-2 font-semibold text-gray-800">${item.fazenda}</td>
                     <td class="px-2 py-2 text-gray-600">${item.talhao}</td>
                 `;
@@ -168,7 +210,8 @@
 
         function limparSelecao() {
             talhoesSelecionados = [];
-            ordemSelecao = 1;
+            sequenciaPorFazenda = {};
+            contadorSequencia = 1;
             document.getElementById('select-fazenda').value = "";
             restaurarVisualMapa();
             document.getElementById('tabela-selecao').innerHTML = '<tr><td colspan="3" class="px-2 py-4 text-gray-500 italic text-center">Nenhum talhão selecionado.</td></tr>';
@@ -177,8 +220,9 @@
         function restaurarVisualMapa() {
             if(!geojsonLayer) return;
             geojsonLayer.eachLayer(function(layer) {
-                if (talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno)) {
-                    layer.setStyle(estiloSelecionado);
+                const sel = talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno);
+                if (sel) {
+                    layer.setStyle({ color: sel.cor, weight: 3, fillOpacity: 0.6, opacity: 1 });
                 } else {
                     layer.setStyle(estiloPadrao);
                 }
@@ -186,17 +230,16 @@
         }
 
         // ==========================================
-        // GERADOR DE PDF: MODO 2 PÁGINAS (RETRATO)
+        // GERADOR DE PDF - ENQUADRAMENTO CIRÚRGICO
         // ==========================================
         function gerarPDF() {
-            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão primeiro.");
+            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão primeiro. Você acha que eu imprimo o ar?");
             
             const btn = document.querySelector('button[onclick="gerarPDF()"]');
             const textoOriginal = btn.innerText; 
-            btn.innerText = "Transformando Layout..."; 
+            btn.innerText = "Transformando Layout e Calculando Zoom..."; 
             btn.disabled = true;
 
-            // 1. Apaga os talhões não selecionados do mapa
             const boundsSelecionados = L.featureGroup();
             geojsonLayer.eachLayer(function(layer) {
                 if (talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno)) {
@@ -206,87 +249,84 @@
                 }
             });
 
-            // 2. Elementos que vamos hackear
             const areaImpressao = document.getElementById('area-de-impressao');
             const sidebar = document.getElementById('sidebar');
             const mapArea = document.getElementById('map-area');
             const containerTabela = document.getElementById('container-tabela');
 
-            // 3. Salva os estilos originais para podermos arrumar a bagunça depois
             const classAreaOrig = areaImpressao.className;
             const classSidebarOrig = sidebar.className;
             const classMapOrig = mapArea.className;
             const classContainerTabelaOrig = containerTabela.className;
 
-            // 4. Quebra o Layout: Tira o Lado-a-Lado e põe em blocos
-            areaImpressao.className = "w-full bg-white block"; // block no lugar do flex
-            sidebar.className = "w-full bg-white"; // Tabela pega 100% da largura
-            containerTabela.className = "p-4"; // Tira o "overflow-y-auto" pra tabela crescer até o fim
-            mapArea.className = "w-full relative mt-4"; // Mapa pega 100% da largura
+            areaImpressao.className = "w-full bg-white block"; 
+            sidebar.className = "w-full bg-white"; 
+            containerTabela.className = "p-4"; 
+            mapArea.className = "w-full relative mt-4"; 
             
-            // Força o mapa a ter uma altura compatível com uma folha A4 em retrato (297mm)
             mapArea.style.height = "260mm"; 
 
-            // 5. Injeta a quebra de página mágica do html2pdf
             const pageBreak = document.createElement('div');
             pageBreak.className = "html2pdf__page-break";
             sidebar.after(pageBreak);
 
-            // 6. Manda o Leaflet recalcular o tamanho e dar o zoom nos selecionados
+            // 1. Invalida o tamanho pro Leaflet entender que o div mudou
             map.invalidateSize();
-            map.fitBounds(boundsSelecionados.getBounds(), { padding: [40, 40] });
 
-            // Dá 800ms pro Google Maps carregar as imagens na nova resolução gigante
+            // 2. Espera um décimo de segundo pro HTML assentar, e manda o zoom cirúrgico (padding minúsculo de 5px)
             setTimeout(() => {
-                btn.innerText = "Gerando as páginas...";
+                map.fitBounds(boundsSelecionados.getBounds(), { padding: [5, 5], maxZoom: 17 });
                 
-                const opt = {
-                    margin: 10, 
-                    filename: 'relatorio_controle_agricola.pdf', 
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2, useCORS: true, logging: false }, 
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } // Agora é retrato!
-                };
-                
-                html2pdf().set(opt).from(areaImpressao).save().then(() => { 
-                    // 7. RESTAURA TUDO PARA O USUÁRIO NÃO PERCEBER O HACK
-                    pageBreak.remove();
-                    areaImpressao.className = classAreaOrig;
-                    sidebar.className = classSidebarOrig;
-                    mapArea.className = classMapOrig;
-                    containerTabela.className = classContainerTabelaOrig;
-                    mapArea.style.height = ""; // Tira a altura fixa
+                // 3. Espera o Google Maps baixar os satélites na nova resolução gigante antes de bater a foto
+                setTimeout(() => {
+                    btn.innerText = "Imprimindo PDF...";
                     
-                    map.invalidateSize(); // Recalcula o mapa de volta pro tamanho original
-                    restaurarVisualMapa();
+                    const opt = {
+                        margin: 10, 
+                        filename: 'relatorio_controle_agricola_colorido.pdf', 
+                        image: { type: 'jpeg', quality: 0.98 },
+                        html2canvas: { scale: 2, useCORS: true, logging: false }, 
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                    };
                     
-                    const fazendaFiltro = document.getElementById('select-fazenda').value;
-                    if(fazendaFiltro) {
-                        document.getElementById('select-fazenda').dispatchEvent(new Event('change'));
-                    } else {
-                        map.fitBounds(geojsonLayer.getBounds());
-                    }
+                    html2pdf().set(opt).from(areaImpressao).save().then(() => { 
+                        pageBreak.remove();
+                        areaImpressao.className = classAreaOrig;
+                        sidebar.className = classSidebarOrig;
+                        mapArea.className = classMapOrig;
+                        containerTabela.className = classContainerTabelaOrig;
+                        mapArea.style.height = ""; 
+                        
+                        map.invalidateSize(); 
+                        restaurarVisualMapa();
+                        
+                        const fazendaFiltro = document.getElementById('select-fazenda').value;
+                        if(fazendaFiltro) {
+                            document.getElementById('select-fazenda').dispatchEvent(new Event('change'));
+                        } else {
+                            map.fitBounds(geojsonLayer.getBounds());
+                        }
 
-                    btn.innerText = textoOriginal; 
-                    btn.disabled = false; 
-                }).catch(err => { 
-                    alert("Erro absurdo ao renderizar o PDF. A culpa é do JavaScript."); 
-                    console.error(err);
-                    
-                    // Restaura mesmo dando erro pra tela não ficar morta
-                    pageBreak.remove();
-                    areaImpressao.className = classAreaOrig;
-                    sidebar.className = classSidebarOrig;
-                    mapArea.className = classMapOrig;
-                    containerTabela.className = classContainerTabelaOrig;
-                    mapArea.style.height = "";
-                    map.invalidateSize();
-                    restaurarVisualMapa();
+                        btn.innerText = textoOriginal; 
+                        btn.disabled = false; 
+                    }).catch(err => { 
+                        alert("Deu erro. O front-end sofre."); 
+                        console.error(err);
+                        
+                        pageBreak.remove();
+                        areaImpressao.className = classAreaOrig;
+                        sidebar.className = classSidebarOrig;
+                        mapArea.className = classMapOrig;
+                        containerTabela.className = classContainerTabelaOrig;
+                        mapArea.style.height = "";
+                        map.invalidateSize();
+                        restaurarVisualMapa();
 
-                    btn.innerText = textoOriginal; 
-                    btn.disabled = false; 
-                });
-            }, 800); 
+                        btn.innerText = textoOriginal; 
+                        btn.disabled = false; 
+                    });
+                }, 800); // 800ms de caridade pro Google carregar as imagens
+            }, 100); 
         }
     </script>
 </body>
