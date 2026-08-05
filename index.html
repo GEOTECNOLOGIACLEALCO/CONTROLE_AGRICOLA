@@ -1,12 +1,77 @@
-<script>
-        // O SEGREDO DO SUCESSO ESTÁ AQUI: { preferCanvas: true }
-        // Isso impede que seu navegador sofra combustão espontânea.
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório Controle Agricola - Gestão de Talhões</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- CARREGANDO OS DADOS GERADOS PELO PYTHON DIRETAMENTE (OFFLINE) -->
+    <script src="talhoes.js"></script>
+
+    <style>
+        #map { height: 100%; width: 100%; z-index: 1; }
+        .esconder-scroll::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen font-sans overflow-hidden">
+    <div id="area-de-impressao" class="flex h-full w-full bg-white">
+        
+        <aside class="w-1/3 bg-white shadow-xl flex flex-col z-10 border-r border-gray-300">
+            <div class="p-6 bg-blue-900 text-white">
+                <h1 class="text-2xl font-bold">Relatório Controle Agricola</h1>
+                <p class="text-sm opacity-80">Ordem de seleção das áreas</p>
+            </div>
+            
+            <div class="p-4 bg-gray-50 border-b border-gray-200" data-html2canvas-ignore>
+                <label class="block text-sm font-bold text-gray-700 mb-2">Ações e Filtros</label>
+                <select id="select-fazenda" class="w-full p-2 mb-3 border rounded shadow-sm focus:ring-blue-500">
+                    <option value="">Localizar Fazenda no mapa...</option>
+                </select>
+                <button onclick="gerarPDF()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
+                    Imprimir Mapa + Tabela (PDF)
+                </button>
+                <button onclick="limparSelecao()" class="w-full bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-1 px-4 rounded shadow mt-2">
+                    Limpar Tudo
+                </button>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto esconder-scroll">
+                <h2 class="text-lg font-bold mb-4 text-gray-800 border-b pb-2">Sequência de Operação</h2>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-left text-sm whitespace-nowrap">
+                        <thead class="uppercase tracking-wider border-b-2 border-gray-800 bg-gray-50">
+                            <tr>
+                                <th scope="col" class="px-2 py-3">Ordem</th>
+                                <th scope="col" class="px-2 py-3">Fazenda</th>
+                                <th scope="col" class="px-2 py-3">Talhão</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabela-selecao" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="3" class="px-2 py-4 text-gray-500 italic text-center">Nenhum talhão selecionado.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </aside>
+
+        <main class="w-2/3 relative h-full">
+            <div id="map"></div>
+        </main>
+    </div>
+
+    <script>
+        // Otimização nível hard: preferCanvas ativado para rodar liso.
         const map = L.map('map', { preferCanvas: true }).setView([-15.7801, -47.9292], 5);
 
         L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-            maxZoom: 20,
-            crossOrigin: true, 
-            attribution: '© Google Maps'
+            maxZoom: 20, crossOrigin: true, attribution: '© Google Maps'
         }).addTo(map);
 
         let ordemSelecao = 1;
@@ -14,70 +79,52 @@
         let listaFazendas = new Set();
         let geojsonLayer;
 
-        // Simplifiquei as bordas para exigir menos processamento de vídeo
         const estiloPadrao = { color: "#3388ff", weight: 1, fillOpacity: 0.2 };
         const estiloSelecionado = { color: "#ff1111", weight: 3, fillOpacity: 0.6 };
 
-        fetch('talhoes.geojson')
-            .then(response => {
-                if (!response.ok) throw new Error("Cadê o arquivo talhoes.geojson?");
-                return response.json();
-            })
-            .then(data => {
-                document.getElementById('status-tabela').innerText = "Nenhum talhão selecionado.";
-                const selectFazenda = document.getElementById('select-fazenda');
-                selectFazenda.innerHTML = '<option value="">Localizar Fazenda no mapa...</option>';
-                selectFazenda.disabled = false;
+        if (typeof meusTalhoes === 'undefined') {
+            alert("Erro fatal: A variável 'meusTalhoes' não existe. O Python não rodou direito!");
+        } else {
+            geojsonLayer = L.geoJSON(meusTalhoes, {
+                style: estiloPadrao,
+                onEachFeature: function (feature, layer) {
+                    
+                    // Inteligência para achar a coluna certa independentemente de estar maiúsculo ou minúsculo
+                    let propFazenda = Object.keys(feature.properties).find(k => k.toLowerCase().includes('fazenda'));
+                    let propTalhao = Object.keys(feature.properties).find(k => k.toLowerCase().includes('talhao') || k.toLowerCase().includes('talh'));
 
-                geojsonLayer = L.geoJSON(data, {
-                    style: estiloPadrao,
-                    onEachFeature: function (feature, layer) {
-                        const fazenda = feature.properties.fazenda || 'Sem Nome';
-                        const talhao = feature.properties.talhao || 'S/N';
+                    const fazenda = propFazenda ? feature.properties[propFazenda] : 'Fazenda Desconhecida';
+                    const talhao = propTalhao ? feature.properties[propTalhao] : 'S/N';
 
-                        listaFazendas.add(fazenda);
+                    listaFazendas.add(fazenda);
 
-                        // REMOVIDO o "permanent: true". 
-                        // Agora o rótulo só aparece quando o tratorista (ou você) passar o mouse em cima.
-                        layer.bindTooltip(`${fazenda} - ${talhao}`, {
-                            direction: "center", 
-                            className: 'bg-white bg-opacity-90 px-2 py-1 border border-gray-400 rounded text-sm font-bold text-black shadow'
-                        });
+                    // Tooltip sutil, só aparece quando passa o mouse (salva a memória RAM do PC)
+                    layer.bindTooltip(`${fazenda} - ${talhao}`, {
+                        direction: "center", className: 'bg-white bg-opacity-90 px-2 py-1 border border-gray-400 rounded text-sm font-bold shadow'
+                    });
 
-                        layer.on('click', function () {
-                            const idTalhao = fazenda + talhao;
-                            
-                            if(talhoesSelecionados.find(t => t.id === idTalhao)) return;
+                    layer.on('click', function () {
+                        const idTalhao = fazenda + "-" + talhao;
+                        if(talhoesSelecionados.find(t => t.id === idTalhao)) return;
+                        
+                        layer.setStyle(estiloSelecionado);
+                        talhoesSelecionados.push({ id: idTalhao, ordem: ordemSelecao, fazenda: fazenda, talhao: talhao });
+                        atualizarTabelaUI();
+                        ordemSelecao++;
+                    });
+                }
+            }).addTo(map);
 
-                            layer.setStyle(estiloSelecionado);
+            map.fitBounds(geojsonLayer.getBounds());
 
-                            talhoesSelecionados.push({
-                                id: idTalhao,
-                                ordem: ordemSelecao,
-                                fazenda: fazenda,
-                                talhao: talhao
-                            });
-
-                            atualizarTabelaUI();
-                            ordemSelecao++;
-                        });
-                    }
-                }).addTo(map);
-
-                map.fitBounds(geojsonLayer.getBounds());
-
-                // Organizando as fazendas em ordem alfabética porque somos civilizados
-                Array.from(listaFazendas).sort().forEach(fazenda => {
-                    let option = document.createElement('option');
-                    option.value = fazenda;
-                    option.text = fazenda;
-                    selectFazenda.appendChild(option);
-                });
-            })
-            .catch(error => {
-                console.error(error);
-                document.getElementById('status-tabela').innerText = "Erro ao carregar dados. Verifique o console.";
+            const selectFazenda = document.getElementById('select-fazenda');
+            Array.from(listaFazendas).sort().forEach(fazenda => {
+                let option = document.createElement('option');
+                option.value = fazenda;
+                option.text = fazenda;
+                selectFazenda.appendChild(option);
             });
+        }
 
         document.getElementById('select-fazenda').addEventListener('change', function(e) {
             const fazendaAlvo = e.target.value;
@@ -85,7 +132,8 @@
 
             const boundsFazenda = L.featureGroup();
             geojsonLayer.eachLayer(function(layer) {
-                if (layer.feature.properties.fazenda === fazendaAlvo) {
+                let propFazenda = Object.keys(layer.feature.properties).find(k => k.toLowerCase().includes('fazenda'));
+                if (propFazenda && layer.feature.properties[propFazenda] === fazendaAlvo) {
                     boundsFazenda.addLayer(layer);
                 }
             });
@@ -98,7 +146,6 @@
         function atualizarTabelaUI() {
             const tbody = document.getElementById('tabela-selecao');
             tbody.innerHTML = ''; 
-            
             talhoesSelecionados.forEach(item => {
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-gray-100 transition-colors";
@@ -115,41 +162,21 @@
             talhoesSelecionados = [];
             ordemSelecao = 1;
             if(geojsonLayer) geojsonLayer.setStyle(estiloPadrao);
-            
-            const tabela = document.getElementById('tabela-selecao');
-            if(tabela) {
-                tabela.innerHTML = '<tr><td colspan="3" class="px-2 py-4 text-gray-500 italic text-center">Nenhum talhão selecionado.</td></tr>';
-            }
+            document.getElementById('tabela-selecao').innerHTML = '<tr><td colspan="3" class="px-2 py-4 text-gray-500 italic text-center">Nenhum talhão selecionado.</td></tr>';
         }
 
         function gerarPDF() {
-            if(talhoesSelecionados.length === 0) {
-                alert("Imprimir o vazio é inútil. Selecione um talhão.");
-                return;
-            }
-
+            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão primeiro.");
             const elementoInteiro = document.getElementById('area-de-impressao');
-            
             const opt = {
-                margin:       0,
-                filename:     'relatorio_controle_agricola.pdf',
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true, logging: false },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+                margin: 0, filename: 'relatorio_controle_agricola.pdf', image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
             };
-
             const btn = document.querySelector('button[onclick="gerarPDF()"]');
-            const textoOriginal = btn.innerText;
-            btn.innerText = "Gerando PDF...";
-            btn.disabled = true;
-
-            html2pdf().set(opt).from(elementoInteiro).save().then(() => {
-                btn.innerText = textoOriginal;
-                btn.disabled = false;
-            }).catch(err => {
-                alert("Erro ao renderizar o PDF.");
-                btn.innerText = textoOriginal;
-                btn.disabled = false;
-            });
+            const textoOriginal = btn.innerText; btn.innerText = "Gerando PDF..."; btn.disabled = true;
+            html2pdf().set(opt).from(elementoInteiro).save().then(() => { btn.innerText = textoOriginal; btn.disabled = false; })
+                .catch(err => { alert("Erro ao renderizar o PDF."); btn.innerText = textoOriginal; btn.disabled = false; });
         }
     </script>
+</body>
+</html>
