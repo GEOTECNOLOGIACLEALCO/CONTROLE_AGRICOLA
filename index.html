@@ -19,7 +19,7 @@
 <body class="bg-gray-100 h-screen font-sans overflow-hidden">
     <div id="area-de-impressao" class="flex h-full w-full bg-white">
         
-        <aside class="w-1/3 bg-white shadow-xl flex flex-col z-10 border-r border-gray-300">
+        <aside class="w-1/3 bg-white shadow-xl flex flex-col z-10 border-r border-gray-300" id="sidebar">
             <div class="p-6 bg-blue-900 text-white">
                 <h1 class="text-2xl font-bold">Relatório Controle Agricola</h1>
                 <p class="text-sm opacity-80">Ordem de seleção das áreas</p>
@@ -31,14 +31,14 @@
                     <option value="">Todas as Fazendas (Mostrar Tudo)</option>
                 </select>
                 <button onclick="gerarPDF()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
-                    Imprimir Mapa Filtrado (PDF)
+                    Imprimir Relatório (PDF 2+ Páginas)
                 </button>
                 <button onclick="limparSelecao()" class="w-full bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-1 px-4 rounded shadow mt-2">
                     Limpar Tudo
                 </button>
             </div>
 
-            <div class="p-4 flex-1 overflow-y-auto esconder-scroll">
+            <div class="p-4 flex-1 overflow-y-auto esconder-scroll" id="container-tabela">
                 <h2 class="text-lg font-bold mb-4 text-gray-800 border-b pb-2">Sequência de Operação</h2>
                 <div class="overflow-x-auto">
                     <table class="min-w-full text-left text-sm whitespace-nowrap">
@@ -59,7 +59,7 @@
             </div>
         </aside>
 
-        <main class="w-2/3 relative h-full">
+        <main class="w-2/3 relative h-full" id="map-area">
             <div id="map"></div>
         </main>
     </div>
@@ -77,8 +77,8 @@
         let geojsonLayer;
 
         const estiloPadrao = { color: "#3388ff", weight: 1, fillOpacity: 0.2, opacity: 1 };
-        const estiloApagado = { color: "#999999", weight: 1, fillOpacity: 0.05, opacity: 0.3 }; // Para sumir no filtro
-        const estiloInvisivel = { color: "transparent", weight: 0, fillOpacity: 0, opacity: 0 }; // Para o PDF
+        const estiloApagado = { color: "#999999", weight: 1, fillOpacity: 0.05, opacity: 0.3 };
+        const estiloInvisivel = { color: "transparent", weight: 0, fillOpacity: 0, opacity: 0 };
         const estiloSelecionado = { color: "#ff1111", weight: 3, fillOpacity: 0.6, opacity: 1 };
 
         if (typeof meusTalhoes === 'undefined') {
@@ -87,7 +87,6 @@
             geojsonLayer = L.geoJSON(meusTalhoes, {
                 style: estiloPadrao,
                 onEachFeature: function (feature, layer) {
-                    
                     let propFazenda = Object.keys(feature.properties).find(k => k.toLowerCase().includes('fazenda'));
                     let propTalhao = Object.keys(feature.properties).find(k => k.toLowerCase().includes('talhao') || k.toLowerCase().includes('talh'));
 
@@ -95,7 +94,6 @@
                     const talhao = propTalhao ? feature.properties[propTalhao] : 'S/N';
                     const idTalhao = fazenda + "-" + talhao;
 
-                    // Salvando na feature para facilitar a busca depois
                     feature.properties._nomeFazenda = fazenda;
                     feature.properties._idInterno = idTalhao;
 
@@ -109,7 +107,7 @@
                         if(talhoesSelecionados.find(t => t.id === idTalhao)) return;
                         
                         layer.setStyle(estiloSelecionado);
-                        talhoesSelecionados.push({ id: idTalhao, ordem: ordemSelecao, fazenda: fazenda, talhao: talhao, layer: layer });
+                        talhoesSelecionados.push({ id: idTalhao, ordem: ordemSelecao, fazenda: fazenda, talhao: talhao });
                         atualizarTabelaUI();
                         ordemSelecao++;
                     });
@@ -127,30 +125,24 @@
             });
         }
 
-        // ==========================================
-        // FILTRO DE FAZENDA 2.0 (APAGA AS OUTRAS)
-        // ==========================================
         document.getElementById('select-fazenda').addEventListener('change', function(e) {
             const fazendaAlvo = e.target.value;
             if(!geojsonLayer) return;
 
             if(!fazendaAlvo) {
-                // Se escolheu "Mostrar tudo", restaura a visão normal
                 restaurarVisualMapa();
                 map.fitBounds(geojsonLayer.getBounds());
                 return;
             }
 
             const boundsFazenda = L.featureGroup();
-            
             geojsonLayer.eachLayer(function(layer) {
                 const isSelecionado = talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno);
-                
                 if (layer.feature.properties._nomeFazenda === fazendaAlvo) {
                     boundsFazenda.addLayer(layer);
-                    if (!isSelecionado) layer.setStyle(estiloPadrao); // Acende a fazenda alvo
+                    if (!isSelecionado) layer.setStyle(estiloPadrao);
                 } else {
-                    if (!isSelecionado) layer.setStyle(estiloApagado); // Apaga o resto do mundo
+                    if (!isSelecionado) layer.setStyle(estiloApagado);
                 }
             });
 
@@ -194,47 +186,80 @@
         }
 
         // ==========================================
-        // O GERADOR DE PDF SNIPER (SÓ MOSTRA O SELECIONADO)
+        // GERADOR DE PDF: MODO 2 PÁGINAS (RETRATO)
         // ==========================================
         function gerarPDF() {
-            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão. Quer gastar PDF à toa?");
+            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão primeiro.");
             
             const btn = document.querySelector('button[onclick="gerarPDF()"]');
             const textoOriginal = btn.innerText; 
-            btn.innerText = "Preparando a foto..."; 
+            btn.innerText = "Transformando Layout..."; 
             btn.disabled = true;
 
-            // Passo 1: Deixar invisível tudo que NÃO foi selecionado
+            // 1. Apaga os talhões não selecionados do mapa
             const boundsSelecionados = L.featureGroup();
             geojsonLayer.eachLayer(function(layer) {
                 if (talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno)) {
                     boundsSelecionados.addLayer(layer);
                 } else {
-                    layer.setStyle(estiloInvisivel); // Some daqui
+                    layer.setStyle(estiloInvisivel);
                 }
             });
 
-            // Passo 2: Dar um zoom cinematográfico só nos polígonos selecionados
+            // 2. Elementos que vamos hackear
+            const areaImpressao = document.getElementById('area-de-impressao');
+            const sidebar = document.getElementById('sidebar');
+            const mapArea = document.getElementById('map-area');
+            const containerTabela = document.getElementById('container-tabela');
+
+            // 3. Salva os estilos originais para podermos arrumar a bagunça depois
+            const classAreaOrig = areaImpressao.className;
+            const classSidebarOrig = sidebar.className;
+            const classMapOrig = mapArea.className;
+            const classContainerTabelaOrig = containerTabela.className;
+
+            // 4. Quebra o Layout: Tira o Lado-a-Lado e põe em blocos
+            areaImpressao.className = "w-full bg-white block"; // block no lugar do flex
+            sidebar.className = "w-full bg-white"; // Tabela pega 100% da largura
+            containerTabela.className = "p-4"; // Tira o "overflow-y-auto" pra tabela crescer até o fim
+            mapArea.className = "w-full relative mt-4"; // Mapa pega 100% da largura
+            
+            // Força o mapa a ter uma altura compatível com uma folha A4 em retrato (297mm)
+            mapArea.style.height = "260mm"; 
+
+            // 5. Injeta a quebra de página mágica do html2pdf
+            const pageBreak = document.createElement('div');
+            pageBreak.className = "html2pdf__page-break";
+            sidebar.after(pageBreak);
+
+            // 6. Manda o Leaflet recalcular o tamanho e dar o zoom nos selecionados
+            map.invalidateSize();
             map.fitBounds(boundsSelecionados.getBounds(), { padding: [40, 40] });
 
-            // Dá um tempo de 500ms para o mapa carregar os tiles do Google no novo zoom antes de bater a foto
+            // Dá 800ms pro Google Maps carregar as imagens na nova resolução gigante
             setTimeout(() => {
-                btn.innerText = "Gerando PDF...";
+                btn.innerText = "Gerando as páginas...";
                 
-                const elementoInteiro = document.getElementById('area-de-impressao');
                 const opt = {
-                    margin: 0, filename: 'relatorio_controle_agricola_filtrado.pdf', 
+                    margin: 10, 
+                    filename: 'relatorio_controle_agricola.pdf', 
                     image: { type: 'jpeg', quality: 0.98 },
                     html2canvas: { scale: 2, useCORS: true, logging: false }, 
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } // Agora é retrato!
                 };
                 
-                // Passo 3: Gera o PDF
-                html2pdf().set(opt).from(elementoInteiro).save().then(() => { 
-                    // Passo 4: Finge que nada aconteceu e devolve o mapa ao normal
+                html2pdf().set(opt).from(areaImpressao).save().then(() => { 
+                    // 7. RESTAURA TUDO PARA O USUÁRIO NÃO PERCEBER O HACK
+                    pageBreak.remove();
+                    areaImpressao.className = classAreaOrig;
+                    sidebar.className = classSidebarOrig;
+                    mapArea.className = classMapOrig;
+                    containerTabela.className = classContainerTabelaOrig;
+                    mapArea.style.height = ""; // Tira a altura fixa
+                    
+                    map.invalidateSize(); // Recalcula o mapa de volta pro tamanho original
                     restaurarVisualMapa();
                     
-                    // Se tinha uma fazenda selecionada no dropdown, volta o zoom pra ela. Se não, volta pro geral.
                     const fazendaFiltro = document.getElementById('select-fazenda').value;
                     if(fazendaFiltro) {
                         document.getElementById('select-fazenda').dispatchEvent(new Event('change'));
@@ -245,12 +270,23 @@
                     btn.innerText = textoOriginal; 
                     btn.disabled = false; 
                 }).catch(err => { 
-                    alert("Erro ao renderizar o PDF."); 
+                    alert("Erro absurdo ao renderizar o PDF. A culpa é do JavaScript."); 
+                    console.error(err);
+                    
+                    // Restaura mesmo dando erro pra tela não ficar morta
+                    pageBreak.remove();
+                    areaImpressao.className = classAreaOrig;
+                    sidebar.className = classSidebarOrig;
+                    mapArea.className = classMapOrig;
+                    containerTabela.className = classContainerTabelaOrig;
+                    mapArea.style.height = "";
+                    map.invalidateSize();
                     restaurarVisualMapa();
+
                     btn.innerText = textoOriginal; 
                     btn.disabled = false; 
                 });
-            }, 500); // 500 milissegundos de delay para a foto sair focada
+            }, 800); 
         }
     </script>
 </body>
