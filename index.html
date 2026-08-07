@@ -16,7 +16,6 @@
         .esconder-scroll::-webkit-scrollbar { display: none; }
         .bolinha-cor { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; border: 1px solid #000; }
         
-        /* O estilo da nova Legenda Flutuante */
         .info.legend {
             background: white; padding: 10px; border-radius: 5px; border: 1px solid #ccc;
             box-shadow: 0 1px 5px rgba(0,0,0,0.4); font-size: 13px; line-height: 20px; color: #333; min-width: 150px;
@@ -25,7 +24,6 @@
     </style>
 </head>
 <body class="bg-gray-100 h-screen font-sans overflow-hidden">
-    <!-- Repare que o id area-de-impressao engloba tudo -->
     <div id="area-de-impressao" class="flex h-full w-full bg-white transition-all">
         
         <aside class="w-1/3 bg-white shadow-xl flex flex-col z-10 border-r border-gray-300" id="sidebar">
@@ -80,9 +78,6 @@
             maxZoom: 20, crossOrigin: true, attribution: '© Google Maps'
         }).addTo(map);
 
-        // ==========================================
-        // LEGENDA FLUTUANTE (CANTO INFERIOR ESQUERDO)
-        // ==========================================
         const legend = L.control({position: 'bottomleft'});
         legend.onAdd = function (map) {
             const div = L.DomUtil.create('div', 'info legend');
@@ -187,7 +182,8 @@
             });
 
             if (boundsFazenda.getLayers().length > 0) {
-                map.fitBounds(boundsFazenda.getBounds(), { padding: [20, 20] });
+                // Buffer de 15% aqui também para o dropdown não esmagar a fazenda na tela
+                map.fitBounds(boundsFazenda.getBounds().pad(0.15));
             }
         });
 
@@ -252,14 +248,14 @@
         }
 
         // ==========================================
-        // GERADOR DE PDF - O ENQUADRAMENTO PERFEITO A4
+        // GERADOR DE PDF - COM BUFFER DE 15%
         // ==========================================
         function gerarPDF() {
-            if(talhoesSelecionados.length === 0) return alert("Por favor, selecione alguma área. PDF de mato não adianta.");
+            if(talhoesSelecionados.length === 0) return alert("Por favor, selecione alguma área.");
             
             const btn = document.querySelector('button[onclick="gerarPDF()"]');
             const textoOriginal = btn.innerText; 
-            btn.innerText = "Calculando Zoom Milimétrico..."; 
+            btn.innerText = "Preparando enquadramento..."; 
             btn.disabled = true;
 
             const boundsSelecionados = L.featureGroup();
@@ -281,14 +277,12 @@
             const classMapOrig = mapArea.className;
             const classContainerTabelaOrig = containerTabela.className;
 
-            // O TRUQUE DE MESTRE: Força as proporções exatas de uma folha A4 no layout antes de dar o zoom!
             areaImpressao.style.width = "210mm"; 
             areaImpressao.className = "bg-white block mx-auto"; 
             
             sidebar.className = "w-full bg-white"; 
             containerTabela.className = "p-4"; 
             
-            // Largura e altura da área útil de um A4 (210x297 menos as margens de 10mm)
             mapArea.className = "relative mt-4 mx-auto"; 
             mapArea.style.width = "190mm"; 
             mapArea.style.height = "260mm"; 
@@ -297,14 +291,13 @@
             pageBreak.className = "html2pdf__page-break";
             sidebar.after(pageBreak);
 
-            // Avisa o Leaflet que a div do mapa mudou para tamanho retrato A4
             map.invalidateSize();
 
-            // Dá o fitBounds PERFEITO com margem minúscula
             setTimeout(() => {
-                map.fitBounds(boundsSelecionados.getBounds(), { padding: [10, 10], maxZoom: 18 });
+                // A MÁGICA DOS 15%: bounds.pad(0.15) 
+                const boundsComRespiro = boundsSelecionados.getBounds().pad(0.15);
+                map.fitBounds(boundsComRespiro, { maxZoom: 18 });
                 
-                // Espera 1 segundo para carregar as imagens de satélite do Google nessa nova proporção alta
                 setTimeout(() => {
                     btn.innerText = "Imprimindo PDF...";
                     
@@ -317,7 +310,6 @@
                     };
                     
                     html2pdf().set(opt).from(areaImpressao).save().then(() => { 
-                        // Desfaz a bagunça para a tela do PC voltar ao normal
                         pageBreak.remove();
                         areaImpressao.style.width = "";
                         areaImpressao.className = classAreaOrig;
