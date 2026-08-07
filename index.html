@@ -15,10 +15,18 @@
         #map { height: 100%; width: 100%; z-index: 1; }
         .esconder-scroll::-webkit-scrollbar { display: none; }
         .bolinha-cor { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; border: 1px solid #000; }
+        
+        /* O estilo da nova Legenda Flutuante */
+        .info.legend {
+            background: white; padding: 10px; border-radius: 5px; border: 1px solid #ccc;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4); font-size: 13px; line-height: 20px; color: #333; min-width: 150px;
+        }
+        .info.legend i { width: 14px; height: 14px; float: left; margin-right: 8px; border: 1px solid #000; border-radius: 50%; margin-top: 3px; }
     </style>
 </head>
 <body class="bg-gray-100 h-screen font-sans overflow-hidden">
-    <div id="area-de-impressao" class="flex h-full w-full bg-white">
+    <!-- Repare que o id area-de-impressao engloba tudo -->
+    <div id="area-de-impressao" class="flex h-full w-full bg-white transition-all">
         
         <aside class="w-1/3 bg-white shadow-xl flex flex-col z-10 border-r border-gray-300" id="sidebar">
             <div class="p-6 bg-blue-900 text-white">
@@ -32,7 +40,7 @@
                     <option value="">Todas as Fazendas (Mostrar Tudo)</option>
                 </select>
                 <button onclick="gerarPDF()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
-                    Imprimir Relatório (PDF Colorido)
+                    Imprimir Relatório (PDF Exato)
                 </button>
                 <button onclick="limparSelecao()" class="w-full bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-1 px-4 rounded shadow mt-2">
                     Limpar Tudo
@@ -66,33 +74,37 @@
     </div>
 
     <script>
-        const map = L.map('map', { preferCanvas: true }).setView([-15.7801, -47.9292], 5);
+        const map = L.map('map', { preferCanvas: true, zoomSnap: 0.1 }).setView([-15.7801, -47.9292], 5);
 
         L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
             maxZoom: 20, crossOrigin: true, attribution: '© Google Maps'
         }).addTo(map);
 
         // ==========================================
-        // VARIÁVEIS DE CONTROLE DA NOVA LÓGICA DE CORES
+        // LEGENDA FLUTUANTE (CANTO INFERIOR ESQUERDO)
         // ==========================================
+        const legend = L.control({position: 'bottomleft'});
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'info legend');
+            div.id = 'map-legend';
+            div.innerHTML = '<strong>Legenda de Áreas</strong><br><span class="text-xs text-gray-500 italic">Nada selecionado</span>';
+            return div;
+        };
+        legend.addTo(map);
+
         let contadorSequencia = 1;
-        let sequenciaPorFazenda = {}; // Vai guardar qual fazenda tem qual sequência e cor
+        let sequenciaPorFazenda = {}; 
         let talhoesSelecionados = [];
         let listaFazendas = new Set();
         let geojsonLayer;
 
-        // Paleta de cores vibrantes para o mapa não ficar parecendo filme deprê europeu
         const paletaCores = [
             "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
             "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
-            "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000",
-            "#aaffc3", "#808000", "#ffd8b1", "#000075", "#808080"
+            "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000"
         ];
 
-        function getCor(ordem) {
-            // Se passar de 20 fazendas, ele repete as cores do começo
-            return paletaCores[(ordem - 1) % paletaCores.length];
-        }
+        function getCor(ordem) { return paletaCores[(ordem - 1) % paletaCores.length]; }
 
         const estiloPadrao = { color: "#3388ff", weight: 1, fillOpacity: 0.2, opacity: 1 };
         const estiloApagado = { color: "#999999", weight: 1, fillOpacity: 0.05, opacity: 0.3 };
@@ -120,28 +132,24 @@
                         direction: "center", className: 'bg-white bg-opacity-90 px-2 py-1 border border-gray-400 rounded text-sm font-bold shadow'
                     });
 
-                    // A NOVA LÓGICA DE CLIQUE
                     layer.on('click', function () {
                         if(talhoesSelecionados.find(t => t.id === idTalhao)) return;
                         
                         let ordem, cor;
-                        
-                        // Checa se a fazenda já tem uma sequência assinada
                         if (sequenciaPorFazenda[fazenda]) {
                             ordem = sequenciaPorFazenda[fazenda].ordem;
                             cor = sequenciaPorFazenda[fazenda].cor;
                         } else {
-                            // Se é fazenda nova, pega a próxima ordem e uma cor nova
                             ordem = contadorSequencia++;
                             cor = getCor(ordem);
                             sequenciaPorFazenda[fazenda] = { ordem: ordem, cor: cor };
                         }
                         
-                        // Pinta com a cor exclusiva da sequência
                         layer.setStyle({ color: cor, weight: 3, fillOpacity: 0.6, opacity: 1 });
-                        
                         talhoesSelecionados.push({ id: idTalhao, ordem: ordem, fazenda: fazenda, talhao: talhao, cor: cor });
+                        
                         atualizarTabelaUI();
+                        atualizarLegenda();
                     });
                 }
             }).addTo(map);
@@ -157,9 +165,6 @@
             });
         }
 
-        // ==========================================
-        // FILTRO DE FAZENDA (COM SUPORTE A CORES)
-        // ==========================================
         document.getElementById('select-fazenda').addEventListener('change', function(e) {
             const fazendaAlvo = e.target.value;
             if(!geojsonLayer) return;
@@ -175,9 +180,9 @@
                 const sel = talhoesSelecionados.find(t => t.id === layer.feature.properties._idInterno);
                 if (layer.feature.properties._nomeFazenda === fazendaAlvo) {
                     boundsFazenda.addLayer(layer);
-                    if (!sel) layer.setStyle(estiloPadrao); // Se não tá selecionado, fica azulzinho
+                    if (!sel) layer.setStyle(estiloPadrao); 
                 } else {
-                    if (!sel) layer.setStyle(estiloApagado); // O resto apaga
+                    if (!sel) layer.setStyle(estiloApagado); 
                 }
             });
 
@@ -186,11 +191,27 @@
             }
         });
 
+        function atualizarLegenda() {
+            const div = document.getElementById('map-legend');
+            if(!div) return;
+            let html = '<strong class="border-b border-gray-400 block mb-2 pb-1">Legenda de Áreas</strong>';
+            let temItem = false;
+            
+            let sequencias = Object.keys(sequenciaPorFazenda).map(k => ({ fazenda: k, ...sequenciaPorFazenda[k] })).sort((a,b) => a.ordem - b.ordem);
+            
+            sequencias.forEach(seq => {
+                if(talhoesSelecionados.find(t => t.fazenda === seq.fazenda)) {
+                    html += '<div class="mt-1"><i style="background:' + seq.cor + '"></i> Seq ' + seq.ordem + ': ' + seq.fazenda + '</div>';
+                    temItem = true;
+                }
+            });
+            if(!temItem) html += '<span class="text-xs text-gray-500 italic">Nenhum selecionado</span>';
+            div.innerHTML = html;
+        }
+
         function atualizarTabelaUI() {
             const tbody = document.getElementById('tabela-selecao');
             tbody.innerHTML = ''; 
-            
-            // Ordena para a tabela ficar bonita (todos da seq 1 juntos, depois seq 2...)
             talhoesSelecionados.sort((a, b) => a.ordem - b.ordem);
 
             talhoesSelecionados.forEach(item => {
@@ -214,6 +235,7 @@
             contadorSequencia = 1;
             document.getElementById('select-fazenda').value = "";
             restaurarVisualMapa();
+            atualizarLegenda();
             document.getElementById('tabela-selecao').innerHTML = '<tr><td colspan="3" class="px-2 py-4 text-gray-500 italic text-center">Nenhum talhão selecionado.</td></tr>';
         }
 
@@ -230,14 +252,14 @@
         }
 
         // ==========================================
-        // GERADOR DE PDF - ENQUADRAMENTO CIRÚRGICO
+        // GERADOR DE PDF - O ENQUADRAMENTO PERFEITO A4
         // ==========================================
         function gerarPDF() {
-            if(talhoesSelecionados.length === 0) return alert("Selecione um talhão primeiro. Você acha que eu imprimo o ar?");
+            if(talhoesSelecionados.length === 0) return alert("Por favor, selecione alguma área. PDF de mato não adianta.");
             
             const btn = document.querySelector('button[onclick="gerarPDF()"]');
             const textoOriginal = btn.innerText; 
-            btn.innerText = "Transformando Layout e Calculando Zoom..."; 
+            btn.innerText = "Calculando Zoom Milimétrico..."; 
             btn.disabled = true;
 
             const boundsSelecionados = L.featureGroup();
@@ -259,43 +281,51 @@
             const classMapOrig = mapArea.className;
             const classContainerTabelaOrig = containerTabela.className;
 
-            areaImpressao.className = "w-full bg-white block"; 
+            // O TRUQUE DE MESTRE: Força as proporções exatas de uma folha A4 no layout antes de dar o zoom!
+            areaImpressao.style.width = "210mm"; 
+            areaImpressao.className = "bg-white block mx-auto"; 
+            
             sidebar.className = "w-full bg-white"; 
             containerTabela.className = "p-4"; 
-            mapArea.className = "w-full relative mt-4"; 
             
+            // Largura e altura da área útil de um A4 (210x297 menos as margens de 10mm)
+            mapArea.className = "relative mt-4 mx-auto"; 
+            mapArea.style.width = "190mm"; 
             mapArea.style.height = "260mm"; 
 
             const pageBreak = document.createElement('div');
             pageBreak.className = "html2pdf__page-break";
             sidebar.after(pageBreak);
 
-            // 1. Invalida o tamanho pro Leaflet entender que o div mudou
+            // Avisa o Leaflet que a div do mapa mudou para tamanho retrato A4
             map.invalidateSize();
 
-            // 2. Espera um décimo de segundo pro HTML assentar, e manda o zoom cirúrgico (padding minúsculo de 5px)
+            // Dá o fitBounds PERFEITO com margem minúscula
             setTimeout(() => {
-                map.fitBounds(boundsSelecionados.getBounds(), { padding: [5, 5], maxZoom: 17 });
+                map.fitBounds(boundsSelecionados.getBounds(), { padding: [10, 10], maxZoom: 18 });
                 
-                // 3. Espera o Google Maps baixar os satélites na nova resolução gigante antes de bater a foto
+                // Espera 1 segundo para carregar as imagens de satélite do Google nessa nova proporção alta
                 setTimeout(() => {
                     btn.innerText = "Imprimindo PDF...";
                     
                     const opt = {
                         margin: 10, 
-                        filename: 'relatorio_controle_agricola_colorido.pdf', 
+                        filename: 'relatorio_controle_agricola_oficial.pdf', 
                         image: { type: 'jpeg', quality: 0.98 },
                         html2canvas: { scale: 2, useCORS: true, logging: false }, 
                         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                     };
                     
                     html2pdf().set(opt).from(areaImpressao).save().then(() => { 
+                        // Desfaz a bagunça para a tela do PC voltar ao normal
                         pageBreak.remove();
+                        areaImpressao.style.width = "";
                         areaImpressao.className = classAreaOrig;
                         sidebar.className = classSidebarOrig;
+                        mapArea.style.width = "";
+                        mapArea.style.height = "";
                         mapArea.className = classMapOrig;
                         containerTabela.className = classContainerTabelaOrig;
-                        mapArea.style.height = ""; 
                         
                         map.invalidateSize(); 
                         restaurarVisualMapa();
@@ -310,22 +340,24 @@
                         btn.innerText = textoOriginal; 
                         btn.disabled = false; 
                     }).catch(err => { 
-                        alert("Deu erro. O front-end sofre."); 
+                        alert("O Chrome chorou na hora de renderizar. Tente de novo."); 
                         console.error(err);
                         
                         pageBreak.remove();
+                        areaImpressao.style.width = "";
                         areaImpressao.className = classAreaOrig;
                         sidebar.className = classSidebarOrig;
+                        mapArea.style.width = "";
+                        mapArea.style.height = "";
                         mapArea.className = classMapOrig;
                         containerTabela.className = classContainerTabelaOrig;
-                        mapArea.style.height = "";
                         map.invalidateSize();
                         restaurarVisualMapa();
 
                         btn.innerText = textoOriginal; 
                         btn.disabled = false; 
                     });
-                }, 800); // 800ms de caridade pro Google carregar as imagens
+                }, 1000); 
             }, 100); 
         }
     </script>
